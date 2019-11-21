@@ -12,14 +12,12 @@ struct mlmc_t {
     static const uint32_t moments = S;
 
     struct mc_diff_output_t {
-        mc_diff_output_t() : sums_fine{0}, sums_diff{0}, work(0), time(0), M(0) {}
-        
-        T sums_fine[S];
-        T sums_diff[S];
+        T sums_fine[S]{};
+        T sums_diff[S]{};
 
-        double work;
-        double time;   // In seconds
-        uint64_t M;
+        double work{0};
+        double time{0};   // In seconds
+        uint64_t M{0};
 
         T dEl() const { return sums_diff[0]/M; };
         T fEl() const { return sums_fine[0]/M; };
@@ -29,11 +27,17 @@ struct mlmc_t {
 
         template <int SS=S >
         typename std::enable_if< SS>=4, T >::type
-        dKl() const { return sums_diff[3]/M / dVl(); };
+        dKl() const { return (sums_diff[3]/M
+                              - 4*(sums_diff[0]/M)*(sums_diff[2]/M)
+                              + 6 * POW2(sums_diff[0]/M)*(sums_diff[1]/M)
+                              - 3 * POW2(POW2(sums_diff[0]/M))) / POW2(dVl()); };
         
         template <int SS=S >
         typename std::enable_if< SS>=4, T >::type
-        fKl() const { return sums_fine[3]/M / fVl(); };
+        fKl() const { return (sums_fine[3]/M
+                              - 4*(sums_fine[0]/M)*(sums_fine[2]/M)
+                              + 6 * POW2(sums_fine[0]/M)*(sums_fine[1]/M)
+                              - 3 * POW2(POW2(sums_fine[0]/M))) / POW2(fVl());; };
 
         mc_diff_output_t& operator+=(const mc_diff_output_t& lhs){
             for (uint32_t s=0;s<S;s++){
@@ -48,15 +52,11 @@ struct mlmc_t {
     };
     
     struct mlmc_output_t {
-        mlmc_output_t() : starting_level(0), bias_est(std::nan("")), TOL(std::nan("")) {
-            // Reasonable defaults
-        }
-        
         std::vector< mc_diff_output_t > levels;
-        uint32_t starting_level;
-        double bias_est;
-        double stat_error;
-        double TOL;
+        uint32_t starting_level{0};
+        double bias_est{std::nan("")};
+        double stat_error{std::nan("")};
+        double TOL{std::nan("")};
 
         uint32_t L() const { return levels.size()-starting_level-1; };
 
@@ -130,7 +130,7 @@ struct mlmc_t {
             mlmc_table.add("fVl", 10,
                            [&] (stringstream& o, uint i) {o << levels[i].fVl();});
 
-            helper_add_Kl(mlmc_table);
+            __helper_add_Kl(mlmc_table);
 
             mlmc_table.add("Wl", 10,
                            [&] (stringstream& o, uint i) {o << levels[i].Wl();});
@@ -150,7 +150,7 @@ struct mlmc_t {
         private:
         //////////////////////////////////////////////////////////// Helpers
         template <int SS=S >
-        typename std::enable_if< SS>=4, void >::type helper_add_Kl(table_t &mlmc_table) const{
+        typename std::enable_if< SS>=4, void >::type __helper_add_Kl(table_t &mlmc_table) const{
             using namespace std;
             mlmc_table.add("dKl", 10,
                            [&] (stringstream& o, uint i) {o << levels[i].dKl();});
@@ -158,7 +158,7 @@ struct mlmc_t {
                            [&] (stringstream& o, uint i) {o << levels[i].fKl();});
         }
         template <int SS=S >
-        typename std::enable_if< SS<4, void >::type helper_add_Kl(table_t &) const {}
+        typename std::enable_if< SS<4, void >::type __helper_add_Kl(table_t &) const {}
         ////////////////////////////////////////////////////////////
     };
 
@@ -172,26 +172,28 @@ struct mlmc_t {
     }
 
     struct mlmc_input_t {
-        mlmc_input_t() : targetTOL(1e-3), startTOL(0.5), theta(0.5),
-                         starting_level_coeff(1.5), Ca(3), verbose(true), M0(100) {
-            // Reasonable defaults
+        template<class TT=T, typename std::enable_if<std::is_floating_point<TT>::value>::type* = nullptr >
+        mlmc_input_t() {
             est_bias = [] (const mlmc_output_t& out) {return default_bias_estimate(out);};
         }
+        template<class TT=T, typename std::enable_if<!std::is_floating_point<TT>::value>::type* = nullptr >
+        mlmc_input_t() {}
+        
         typedef std::function<mc_diff_output_t (uint32_t ell, uint64_t M)> fn_sample_level_t;
         typedef std::function<double (const mlmc_output_t& out)> fn_est_bias_t;
 
         fn_sample_level_t sample_level;
         fn_est_bias_t est_bias;
 
-        double targetTOL;
-        double startTOL;
-        double theta;
-        double starting_level_coeff;
-        double Ca;
-        bool verbose;
-        uint64_t M0;
+        double targetTOL{1e-3};
+        double startTOL{0.5};
+        double theta{0.5};
+        double starting_level_coeff{1.5};
+        double Ca{3};
+        bool verbose{true};
+        uint64_t M0{100};
 
-        uint32_t zero_protection;  // TODO?
+        uint32_t zero_protection{0};
     };
     
     static uint32_t better_starting_level(const mlmc_output_t& out, double starting_level_coeff){
@@ -218,14 +220,19 @@ struct mlmc_t {
     }
 
 
-    static std::vector<uint64_t> get_optimal_Ml(double tol2, uint64_t M0, const mlmc_output_t &out){
-        std::vector<uint64_t> Ml(out.levels.size());
+    static void get_optimal_Ml(double tol2, uint64_t M0,
+                               const mlmc_output_t &out,
+                               std::vector<uint64_t>& Ml){
         uint32_t ell=out.starting_level;
-        double lambda = out.levels[ell].M > 0 ?
-            std::sqrt(out.levels[ell].Wl() * out.levels[ell].fVl()):0;
+
+        Ml.resize(out.levels.size());
+        std::fill(Ml.begin(), Ml.begin() + ell, 0);    // Set all inactive levels to 0 samples
+
+        double lambda = out.levels[ell].M == 0 ? 0 :
+            std::sqrt(out.levels[ell].Wl() * out.levels[ell].fVl());
         for (ell=out.starting_level+1;ell<out.levels.size();ell++){
-            lambda += out.levels[ell].M > 0 ?
-                std::sqrt(out.levels[ell].Wl() * out.levels[ell].dVl()):0;
+            lambda += out.levels[ell].M == 0 ? 0 :
+                std::sqrt(out.levels[ell].Wl() * out.levels[ell].dVl());
         }
         lambda /= tol2;
 
@@ -235,10 +242,7 @@ struct mlmc_t {
         for (ell=out.starting_level+1;ell<out.levels.size();ell++){
             Ml[ell] = (out.levels[ell].M == 0) ? M0 :
                 static_cast<uint64_t>(std::ceil( lambda * std::sqrt(out.levels[ell].dVl()/out.levels[ell].Wl())));
-            //std::cout << ell << " -> " << Ml[ell] << std::endl;
         }
-        // TODO: Maybe do not save it in an array?
-        return Ml;
     }
 
     static mlmc_output_t run(mlmc_input_t& in){
@@ -246,18 +250,18 @@ struct mlmc_t {
 
         mlmc_output_t out;
         double sqrt_2_inv = 1./std::sqrt(2);
-        // Start with 2 levels
-        out.levels.resize(1);
         uint32_t total_itrs = static_cast<uint32_t>(-(std::log2(in.targetTOL)-std::log2(in.startTOL)));
         out.TOL = in.targetTOL * (1 << total_itrs);
         total_itrs *= 2;  // Since we are multiplying by sqrt2
 
+        out.levels.resize(1);         // Start with 1 level
+        std::vector<uint64_t> Ml(out.levels.size());
+        
         for (uint32_t itr=0;itr<=total_itrs;itr++){
             out.starting_level = better_starting_level(out, in.starting_level_coeff);
 
             while (true){
-                std::vector<uint64_t> Ml = get_optimal_Ml(in.theta * POW2(out.TOL)/ in.Ca,
-                                                          in.M0, out);
+                get_optimal_Ml(in.theta * POW2(out.TOL) / in.Ca, in.M0, out, Ml);
                 for (uint32_t ell=0;ell<out.levels.size();ell++) {
                     while (out.levels[ell].M < Ml[ell]){
                         // Add missing samples
@@ -269,8 +273,6 @@ struct mlmc_t {
                 }
 
                 out.stat_error = std::sqrt(in.Ca * out.total_variance());
-                // std::cout << "Stat error " << std::setprecision(15) <<
-                //     POW2(out.stat_error) << ", " << in.theta * POW2(out.TOL) << std::endl;
                 if (POW2(out.stat_error) >= in.theta * POW2(out.TOL))
                     continue;   // We have better variance estimates, so redo this step
 
