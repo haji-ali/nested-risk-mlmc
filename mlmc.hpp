@@ -9,6 +9,13 @@
 
 template<typename T, uint32_t S=2>
 struct mlmc_t {
+    // T has to have the following member functions/operators
+    // T::norm_t: type of norm (unnecessary if T is itself floating type) must support all arithmetic operators
+    // T::norm_t T::norm(): returns norm of T (unnecessary if T is itself floating type)
+    // T T::operator+= (T)
+    // T T::operator* (T)
+    // T T::operator* (double)
+    // operator << (ostream, T)
     static const uint32_t moments = S;
 
     struct mc_diff_output_t {
@@ -16,28 +23,46 @@ struct mlmc_t {
         T sums_diff[S]{};
 
         double work{0};
-        double time{0};   // In seconds
+        double time{0};
         uint64_t M{0};
 
-        T dEl() const { return sums_diff[0]/M; };
-        T fEl() const { return sums_fine[0]/M; };
-        T dVl() const { return sums_diff[1]/M - POW2(dEl()); };
-        T fVl() const { return sums_fine[1]/M  - POW2(sums_fine[0]/M); };
+        T dEl() const { return sums_diff[0] * (1./M); };
+        T fEl() const { return sums_fine[0] * (1./M); };
         double Wl() const { return work/M; };
 
-        template <int SS=S >
-        typename std::enable_if< SS>=4, T >::type
-        dKl() const { return (sums_diff[3]/M
-                              - 4*(sums_diff[0]/M)*(sums_diff[2]/M)
-                              + 6 * POW2(sums_diff[0]/M)*(sums_diff[1]/M)
-                              - 3 * POW2(POW2(sums_diff[0]/M))) / POW2(dVl()); };
+        template<class TT=T>
+        typename TT::norm_t dVl() const {
+            TT tmp = sums_diff[1]*(1./M);
+            tmp += POW2(dEl())*(-1);
+            return tmp.norm(); };
+
+        template<class TT=T, typename std::enable_if<std::is_floating_point<TT>::value>::type* = nullptr >
+        TT dVl() const { return sums_diff[1] * (1./M) - POW2(dEl()); };
+
+        template<class TT=T>
+        typename TT::norm_t fVl() const {
+            TT tmp = sums_fine[1]*(1./M);
+            tmp += POW2(fEl())*(-1);
+            return tmp.norm(); };
+
+        template<class TT=T, typename std::enable_if<std::is_floating_point<TT>::value>::type* = nullptr >
+        TT fVl() const { return sums_fine[1]*(1./M) - POW2(fEl()); };
+
+        template <class TT=T, int SS=S >
+        typename std::enable_if< SS>=4 && std::is_floating_point<TT>::value, TT >::type
+        dKl() const { return mu_4(sums_diff) / POW2(dVl()); };
+
+        template <class TT=T, int SS=S >
+        typename std::enable_if< SS>=4, typename TT::norm_t >::type
+        dKl() const { return mu_4(sums_diff).norm() / POW2(dVl()); };
         
-        template <int SS=S >
-        typename std::enable_if< SS>=4, T >::type
-        fKl() const { return (sums_fine[3]/M
-                              - 4*(sums_fine[0]/M)*(sums_fine[2]/M)
-                              + 6 * POW2(sums_fine[0]/M)*(sums_fine[1]/M)
-                              - 3 * POW2(POW2(sums_fine[0]/M))) / POW2(fVl());; };
+        template <class TT=T, int SS=S >
+        typename std::enable_if< SS>=4  && std::is_floating_point<TT>::value, TT >::type
+        fKl() const { return mu_4(sums_fine) / POW2(fVl()); };
+
+        template <class TT=T, int SS=S >
+        typename std::enable_if< SS>=4, typename TT::norm_t >::type
+        fKl() const { return mu_4(sums_fine).norm() / POW2(fVl()); };
 
         mc_diff_output_t& operator+=(const mc_diff_output_t& lhs){
             for (uint32_t s=0;s<S;s++){
@@ -48,6 +73,14 @@ struct mlmc_t {
             time += lhs.time;
             M += lhs.M;
             return *this;
+        }
+    private:
+        T mu_4(const T *sums) const {
+            T tmp = sums[3]*(1./M);
+            tmp += (sums[0]*(1./M))*(sums_fine[2]*(1./M)) * (-4.);
+            tmp += POW2(sums[0]*(1./M))*(sums_fine[1]*(1./M)) * (6);
+            tmp += POW2(POW2(sums[0]*(1./M))) * (-3.);
+            return tmp;
         }
     };
     
@@ -97,7 +130,9 @@ struct mlmc_t {
                 stat_error <<
                 ") " << std::endl;
 
-            str << "Eg: " << Eg << " --- [" << Eg-TOL << "," << Eg+TOL << "]" << std::endl;
+            str << "Eg: " << Eg;
+            __helper_output_range(str, Eg, TOL);
+            str << std::endl;
 
             str << "Discarded Work: " << discarded_work << std::endl;
             str << "Discarded Time: " << discarded_time << std::endl;
@@ -159,6 +194,13 @@ struct mlmc_t {
         }
         template <int SS=S >
         typename std::enable_if< SS<4, void >::type __helper_add_Kl(table_t &) const {}
+
+        template<class TT=T, typename std::enable_if<std::is_floating_point<TT>::value>::type* = nullptr >
+        void __helper_output_range(std::stringstream& o, const TT &Eg, double TOL) const {
+            o << " --- [" << Eg-TOL << "," << Eg+TOL << "]"; };
+
+        template<class TT=T, typename std::enable_if<!std::is_floating_point<TT>::value>::type* = nullptr >
+        void __helper_output_range(std::stringstream&, const TT &, double) const { };
         ////////////////////////////////////////////////////////////
     };
 
@@ -290,7 +332,7 @@ struct mlmc_t {
         }
         double total_time = ( std::clock() - start ) / (double) CLOCKS_PER_SEC;
         if (in.verbose)
-            std::cout << "# Total time taken: " << total_time << std::endl;
+            std::cout << "# Total time taken: " << total_time << " seconds." << std::endl;
         return out;
     }
 };
