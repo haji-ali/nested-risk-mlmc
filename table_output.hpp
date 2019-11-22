@@ -64,9 +64,12 @@ struct table_t {
 };
 
 inline std::stringstream& operator<<(std::stringstream& s, table_t& tbl) {
+    const char * underline = "\033[4m";
+    const char * underline_bold = "\033[4;1m";
+    const char * normal = "\033[0m";
+
     using namespace std;
-    //uint32_t total_length=0;
-    uint32_t rows = tbl.rows+1; // + header
+    uint32_t rows = tbl.rows + 1; // + header
     for(auto& f : tbl.fields) {
         for (uint32_t i=0;i<rows;i++){
             stringstream tmp;
@@ -78,24 +81,26 @@ inline std::stringstream& operator<<(std::stringstream& s, table_t& tbl) {
     }
 
     for (uint32_t i=0;i<rows;i++){
-        if (i==0 && tbl.non_ascii)
-            s << "\033[4m"; // Underline
+        bool do_line = (i==0 || i == rows-1);
+        if (do_line && tbl.non_ascii)
+            s << underline;
         s << "| ";
         for(const auto& f : tbl.fields) {
             if (i==0 && tbl.non_ascii)
-                s << "\033[4;1m";   // Underling and bold
+                s << underline_bold;
             
             s << setw(f.min_len);
             f.value(s, i);
             if (i==0 && tbl.non_ascii)
-                s << "\033[0m\033[4m";  // Underline only
+                s << normal << underline;
             s << " | ";
         }
-        if (i==0 && tbl.non_ascii) s << "\033[0m";
+        if (do_line && tbl.non_ascii)
+            s << normal;
         s << std::endl;
 
         // If header or last row, add underline
-        if ((i==0 && not tbl.non_ascii) || i==rows-1){
+        if (do_line && not tbl.non_ascii){
             s << "+" << setfill('-');
             for(const auto& f : tbl.fields) {
                 s << setw(3+f.min_len) << "+" ;
