@@ -81,10 +81,7 @@ def parse_file(fname):
     return parse_lines(lines)
 
 
-if __name__ == "__main__":
-    from mimclib import ipdb
-    ipdb.set_excepthook()
-
-    itrs = parse_file("build/test.txt")
-
-    ipdb.embed()
+# Change filename here
+itrs = parse_file("build/test.txt")
+# Then run with python -i parse_mlmc_output.py
+# and access iterations for data.
